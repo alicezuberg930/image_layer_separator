@@ -4,8 +4,16 @@ import matplotlib.pyplot as plt
 from ldivider.ld_convertor import df2rgba
 
 from pytoshop import layers
+from pytoshop import codecs as pytoshop_codecs
 from pytoshop.user import nested_layers
 import pytoshop
+
+# pytoshop 1.2.1 may fail to build/import its bundled ``pytoshop.packbits``
+# extension on newer Python versions. Fall back to the compatible standalone
+# package so RLE-compressed PSD channels can still be written.
+if not hasattr(pytoshop_codecs, "packbits"):
+  import packbits as standalone_packbits
+  pytoshop_codecs.packbits = standalone_packbits
 
 from PIL import Image
 
