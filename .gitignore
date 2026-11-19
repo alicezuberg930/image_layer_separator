@@ -37,3 +37,4 @@ MANIFEST
 *venv/
 *.pth
 output/
+segment_model/

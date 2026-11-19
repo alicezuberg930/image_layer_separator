@@ -1,73 +1,66 @@
-# layerdivider
-A tool to divide a single illustration into a layered structure.
-![スクリーンショット 2023-03-07 034638](https://user-images.githubusercontent.com/48423148/223202706-5c6e9108-0cf4-40dc-b840-9c3df3d540da.png)
+# LayerDivider
 
-![スクリーンショット_20230307_035053](https://user-images.githubusercontent.com/48423148/223345165-e4e2e7f6-059f-445a-ac3d-2c9c3ecd094a.png)
+Create transparent image layers from an illustration using SAM 3 text prompts.
+Each detected mask becomes a full-size PNG with its original colors and a
+transparent background. The interface displays a segmentation preview, a gallery
+of individual layers, and downloadable PNGs.
 
+## Windows setup
 
-https://user-images.githubusercontent.com/48423148/223344286-bf2dff31-3fc5-4970-8d68-86274f1f36eb.mp4
+Requires Python 3.12, Git, an NVIDIA CUDA GPU, and a Hugging Face account with
+access to the gated [facebook/sam3](https://huggingface.co/facebook/sam3)
+checkpoint.
 
-# Install
-## use Google Golab
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mattyamonaca/layerdivider/blob/main/layerdivider_launch.ipynb)
-1. Click colab button.
-2. Run all cells.
-3. Click output addres(Running on public URL: https: //xxxxxxx.gradio.live).
+1. Clone this repository and open PowerShell in the project folder.
+2. Run `./install.ps1` once to create the environment and install dependencies.
+   If you use the Python launcher (`py`), run `./install_with_launcher.ps1` instead.
+3. Accept Meta's model license on Hugging Face, then authenticate:
 
+   ```powershell
+   .\venv\Scripts\hf.exe auth login
+   ```
 
-## Local Install
-### Windows Installation
-#### Required Dependencies
-Python 3.10.8 and Git
+4. Start the app:
 
-#### install Step
-1. 
-``` 
-git clone https://github.com/mattyamonaca/layerdivider
-```
+   ```powershell
+   .\run_gui.ps1
+   ```
 
-2. run `install.ps1` first time use, waiting for installation to complete.
-3. run `run_gui.ps1` to open local gui.
-4. open website localhost:port to use(The default is localhost:7860). 
+5. Open the URL printed in the terminal, normally <http://localhost:7860>.
 
-#### Optional: For Python Launcher Users
-If you use Python launcher (py command) for executing Python, you should use install_with_launcher.ps1 instead of install.ps1.
-The reason is install_with_launcher.ps1 uses py command for executing venv module, while install.ps1 uses python command.
+The official `sam3.pt` checkpoint is downloaded into `segment_model` on the first
+segmentation. The installers install CUDA-enabled PyTorch separately from the
+application dependencies in `requirements.txt`.
 
-# 処理内容
-1. 入力された画像をピクセル単位でRGB情報に従いクラスタリング
-2. 色の類似度（CIEDE2000基準）が近いクラスタを統合
-3. 入力された画像をブラー処理で平滑化
-4. クラスタごとにブラー処理後の色の平均値を出し、算出した平均値ですべてのピクセルを塗りなおし
-5. 2-4を指定された回数繰り返し実行
-6. 最終的なクラスタリング結果に基づき、ベースとなるレイヤーを作成
-7. ベースレイヤーの各色を、入力された画像のクラスタ毎の平均色で塗りなおし
-8. ベースレイヤーとオリジナルの色差に基づいて効果レイヤーを算出
+## Create layers
 
-# Processing content
-1. Cluster the input image based on RGB information at the pixel level.
-2. Merge clusters with similar color similarity (based on CIEDE2000 criteria).
-3. Smooth the input image using a blur process.
-4. For each cluster, calculate the average color value after blurring and repaint all pixels with this calculated value.
-5. Repeat steps 2-4 for a specified number of times.
-6. Create a base layer based on the final clustering result.
-7. Repaint each color in the base layer with the average color of each cluster in the input image.
-8. Calculate an effect layer based on differences between the base layer and original colors.
+1. Upload an image.
+2. Enter short noun phrases, one per line, such as `hair`, `face`, `shirt`, and
+   `shoe`. All prompts are processed together.
+3. Click **Segment with SAM 3** and review the segmentation preview.
+4. Click **Create Layers** to display individual layers in the gallery and
+   download transparent PNGs. Layer filenames include their source prompt.
 
-# パラメータ説明
-* loops: 処理2-4を繰り返す回数
-* init_cluster: 処理1で生成するクラスタの数（大きいほど細かくレイヤー分けされる）
-* ciede_threshold: 処理2でどの程度色が類似していたらクラスタを結合するか決める閾値
-* blur_size: 処理3でかけるブラー処理の大きさ（大きいほど強くぼかす）
-* output_layer_mode
-    * normal: 通常レイヤーのみで出力されるPSDを構成
-    * composite: 通常レイヤー、スクリーンレイヤー、乗算レイヤー、減算レイヤー、加算レイヤーを組み合わせて出力されるPSDを構成
+Generated PNGs are saved in a new `output/sam3_layers_*` folder for each export.
 
-# Parameter Description
-* loops: Number of times to repeat processing 2-4.
-* init_cluster: Number of clusters generated in process 1 (the larger the number, the more finely layered it is).
-* ciede_threshold: Threshold for determining when to combine clusters in process 2 based on how similar their colors are.
-* blur_size: Size of the blur applied in process 3 (the larger the size, the stronger the blurring effect).
-* output_layer_mode:
-    * normal: Constructs a PSD that only includes normal layers.
-    * composite: Constructs a PSD by combining normal layers with screen, multiply, subtract and add layers.
+## SAM 3 settings
+
+* **Confidence threshold:** Minimum concept-detection confidence. Lower values
+  return more masks; higher values retain more confident matches.
+* **Mask threshold:** Probability cutoff used to turn each predicted soft mask
+  into pixels.
+* **Maximum masks:** Maximum number of the highest-scoring masks retained across
+  all prompts.
+* **Minimum mask area:** Discard masks smaller than this number of pixels.
+
+## WebUI extension
+
+The extension registers a **LayerDivider** tab with the same SAM 3 interface.
+Its host environment must provide Python 3.12, CUDA-enabled PyTorch 2.7 or newer,
+and access to the SAM 3 checkpoint.
+
+## Google Colab
+
+Open `layerdivider_launch.ipynb`, select a GPU runtime with Python 3.12 or newer,
+and run the setup cells. Authenticate with Hugging Face when prompted, then open
+the public Gradio URL printed by the final cell.

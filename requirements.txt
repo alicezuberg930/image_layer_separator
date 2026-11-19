@@ -1,19 +1,19 @@
-opencv-python==4.7.0.68
-pandas==1.5.3
-gradio==3.16.2
-scikit-learn==1.2.1
-scikit-image==0.19.3
-Pillow==9.4.0
-tqdm==4.63.0
-pytoshop==1.2.1
-psd-tools==1.9.24
-gradio==3.16.2
-gradio_client==0.2.5
-onnx
-onnxruntime-gpu
-huggingface_hub
-segment_anything
-requests
-numpy
-einops
-torch
+numpy>=1.26,<2
+setuptools<81
+triton-windows; platform_system == "Windows"
+pycocotools>=2.0.10
+psutil>=5.9
+gradio==3.50.2
+gradio_client==0.6.1
+fastapi==0.104.1
+starlette==0.27.0
+anyio==3.7.1
+pydantic==1.10.24
+Pillow>=10,<11
+scipy>=1.11,<2
+tqdm>=4.63
+huggingface_hub>=0.32,<2
+requests>=2.25
+einops>=0.7
+# CUDA-enabled torch and torchvision are installed separately by install.ps1.
+sam3 @ git+https://github.com/facebookresearch/sam3.git

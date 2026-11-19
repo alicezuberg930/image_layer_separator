@@ -1,28 +1,18 @@
 Set-Location $PSScriptRoot
 
 if (!(Test-Path -Path "venv")) {
-    Write-Output  "Creating venv for python..."
-    python -m venv venv
+    Write-Output  "Creating Python 3.12 venv..."
+    python3.12 -m venv venv
 }
 .\venv\Scripts\activate
 
-Write-Output "Installing deps..."
+Write-Output "Installing PyTorch with CUDA 12.8 for SAM 3..."
+pip install torch==2.10.0 torchvision --index-url https://download.pytorch.org/whl/cu128
+
+Write-Output "Installing dependencies, including the official SAM 3 package..."
 pip install --upgrade -r requirements.txt
 
-Write-Output "Installing torch+cuda"
-pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
-
-Write-Output "Searching segment model..."
-$url="https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth"
-
-$dest="./segment_model/sam_vit_h_4b8939.pth"
-
-if (!(Test-Path -Path $dest)) {
-    Write-Output  "Downloading segment model to ./segment_model/sam_vit_h_4b8939.pth"
-    Write-Output  "or you can close now and download it form https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth by yourself"
-    $client = New-Object System.Net.WebClient
-    $client.DownloadFile($url, $dest)
-}
-
 Write-Output "Install completed"
+Write-Output "Before first segmentation, accept access at https://huggingface.co/facebook/sam3"
+Write-Output "Then authenticate with: .\venv\Scripts\hf.exe auth login"
 Read-Host | Out-Null ;
