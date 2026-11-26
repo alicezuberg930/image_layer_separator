@@ -1,21 +1,22 @@
 import copy
 import os
-import pickle
 import re
 import uuid
 from contextlib import nullcontext
+from pathlib import Path
+from threading import RLock
 
 import numpy as np
 import torch
 from PIL import Image
 
+from layerdivider_runtime import sam3_cache
+
+if not hasattr(sam3_cache, "inference_lock"):
+    sam3_cache.inference_lock = RLock()
 
 SAM3_REPO_ID = "facebook/sam3"
 SAM3_CHECKPOINT_NAME = "sam3.pt"
-
-_sam3_model = None
-_sam3_processor = None
-_sam3_checkpoint_path = None
 
 
 def parse_text_prompts(text_prompt):
@@ -55,45 +56,47 @@ def _download_sam3_checkpoint(model_dir):
 
 def get_sam3_processor(confidence_threshold, model_dir, device="cuda"):
     """Load and cache the official SAM 3 image model and processor."""
-    global _sam3_model, _sam3_processor, _sam3_checkpoint_path
-
     if device == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("SAM 3 requires a CUDA-capable GPU, but CUDA is unavailable.")
+        raise RuntimeError(
+            "SAM 3 requires a CUDA-capable GPU, but CUDA is unavailable."
+        )
 
-    torch_version = tuple(int(part) for part in torch.__version__.split("+")[0].split(".")[:2])
+    torch_version = tuple(
+        int(part) for part in torch.__version__.split("+")[0].split(".")[:2]
+    )
     if torch_version < (2, 7):
         raise RuntimeError(
             f"SAM 3 requires PyTorch 2.7 or newer; found {torch.__version__}. "
             "Run the updated installer before using Segment."
         )
 
-    if _sam3_processor is None:
+    if sam3_cache.processor is None:
         try:
-            from sam3.model_builder import build_sam3_image_model
             from sam3.model.sam3_image_processor import Sam3Processor
+            from sam3.model_builder import build_sam3_image_model
         except ImportError as exc:
             raise RuntimeError(
                 "The SAM 3 package is not installed. Run the updated installer or "
                 "install `git+https://github.com/facebookresearch/sam3.git`."
             ) from exc
 
-        _sam3_checkpoint_path = _download_sam3_checkpoint(model_dir)
-        _sam3_model = build_sam3_image_model(
-            checkpoint_path=_sam3_checkpoint_path,
+        sam3_cache.checkpoint_path = _download_sam3_checkpoint(model_dir)
+        sam3_cache.model = build_sam3_image_model(
+            checkpoint_path=sam3_cache.checkpoint_path,
             load_from_HF=False,
             device=device,
             eval_mode=True,
             enable_segmentation=True,
         )
-        _sam3_processor = Sam3Processor(
-            _sam3_model,
+        sam3_cache.processor = Sam3Processor(
+            sam3_cache.model,
             device=device,
             confidence_threshold=float(confidence_threshold),
         )
     else:
-        _sam3_processor.set_confidence_threshold(float(confidence_threshold))
+        sam3_cache.processor.set_confidence_threshold(float(confidence_threshold))
 
-    return _sam3_processor
+    return sam3_cache.processor
 
 
 def get_masks(
@@ -158,66 +161,63 @@ def get_masks(
     return masks
 
 
-def export_mask_layers(image, masks, output_dir):
-    """Export every saved segmentation mask as a full-size transparent PNG."""
+def layer_filename(index, prompt):
+    safe_prompt = re.sub(r"[^A-Za-z0-9_-]+", "_", prompt).strip("_") or "mask"
+    return f"{index:03d}_{safe_prompt}.png"
+
+
+def mask_to_image(image, mask):
+    """Render one full-size transparent layer without changing its source."""
     if image is None:
         raise ValueError("Upload an image before creating PNG layers.")
-    if not masks:
-        raise ValueError("Run SAM 3 segmentation before creating PNG layers.")
-
     if not isinstance(image, Image.Image):
         image = Image.fromarray(np.asarray(image))
     source = np.asarray(image.convert("RGBA"), dtype=np.uint8)
-
-    layer_dir = os.path.join(output_dir, f"sam3_layers_{uuid.uuid4().hex[:8]}")
-    os.makedirs(layer_dir, exist_ok=False)
-
-    layer_paths = []
-    for index, mask in enumerate(masks, start=1):
-        segmentation = np.asarray(mask["segmentation"], dtype=bool)
-        if segmentation.shape != source.shape[:2]:
-            raise ValueError(
-                "The saved masks do not match this image. Run SAM 3 segmentation "
-                "again before creating layers."
-            )
-
-        layer = np.zeros_like(source)
-        layer[segmentation, :3] = source[segmentation, :3]
-        layer[segmentation, 3] = source[segmentation, 3]
-
-        safe_prompt = re.sub(r"[^A-Za-z0-9_-]+", "_", mask.get("prompt", "mask"))
-        safe_prompt = safe_prompt.strip("_") or "mask"
-        filename = f"{index:03d}_{safe_prompt}.png"
-        layer_path = os.path.join(layer_dir, filename)
-        Image.fromarray(layer, mode="RGBA").save(layer_path)
-        layer_paths.append(layer_path)
-
-    return layer_paths
+    segmentation = np.asarray(mask["segmentation"], dtype=bool)
+    if segmentation.shape != source.shape[:2]:
+        raise ValueError("The saved mask does not match the original image.")
+    layer = np.zeros_like(source)
+    layer[segmentation] = source[segmentation]
+    return Image.fromarray(layer, mode="RGBA")
 
 
-def load_masks(output_dir):
-    """Load the most recent SAM 3 segmentation for PNG layer export."""
-    mask_path = os.path.join(output_dir, "tmp", "seg_layer", "sorted_masks.pkl")
+def save_png(image, path):
+    """Replace an image atomically so clients never receive a partial PNG."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.stem}.{uuid.uuid4().hex}.tmp")
     try:
-        with open(mask_path, "rb") as file:
-            return pickle.load(file)
-    except FileNotFoundError as exc:
-        raise ValueError(
-            "Run SAM 3 segmentation before creating PNG layers."
-        ) from exc
+        image.save(temporary, format="PNG")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
-def show_anns(image, masks, output_dir):
+def export_mask_layers(image, masks, output_dir, filenames=None):
+    """Write layers directly to an existing job folder, keeping stable filenames."""
+    if not masks:
+        raise ValueError("Run SAM 3 segmentation before creating PNG layers.")
+    filenames = filenames or [
+        layer_filename(index, mask.get("prompt", "mask"))
+        for index, mask in enumerate(masks, start=1)
+    ]
+    if len(filenames) != len(masks):
+        raise ValueError("Every mask must have a layer filename.")
+    paths = []
+    for mask, filename in zip(masks, filenames):
+        path = Path(output_dir) / filename
+        save_png(mask_to_image(image, mask), path)
+        paths.append(str(path))
+    return paths
+
+
+def show_anns(image, masks):
+    """Render a mask overlay without mutating the job's saved masks."""
     if len(masks) == 0:
         return image.convert("RGBA")
 
     sorted_masks = sorted(masks, key=lambda item: item["area"], reverse=True)
-    mask_dir = os.path.join(output_dir, "tmp", "seg_layer")
-    os.makedirs(mask_dir, exist_ok=True)
-    with open(os.path.join(mask_dir, "sorted_masks.pkl"), "wb") as file:
-        pickle.dump(sorted_masks, file)
-
-    mask_list = []
+    base_mask = image.convert("RGBA")
     for mask in sorted_masks:
         segmentation = mask["segmentation"]
         overlay = np.ones((segmentation.shape[0], segmentation.shape[1], 3))
@@ -225,11 +225,9 @@ def show_anns(image, masks, output_dir):
         for channel in range(3):
             overlay[:, :, channel] = color_mask[channel]
         overlay = np.dstack((overlay * 255, segmentation * 255 * 0.35))
-        mask_list.append(overlay.astype(np.uint8))
-
-    base_mask = image.convert("RGBA")
-    for mask in mask_list:
-        base_mask = Image.alpha_composite(base_mask, Image.fromarray(mask))
+        base_mask = Image.alpha_composite(
+            base_mask, Image.fromarray(overlay.astype(np.uint8))
+        )
 
     return base_mask
 
