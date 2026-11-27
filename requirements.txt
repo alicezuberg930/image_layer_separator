@@ -19,5 +19,5 @@ tqdm>=4.63
 huggingface_hub>=0.32,<2
 requests>=2.25
 einops>=0.7
-# CUDA-enabled torch and torchvision are installed separately by install.ps1.
+# CUDA-enabled torch and torchvision are installed separately by the installers.
 sam3 @ git+https://github.com/facebookresearch/sam3.git
